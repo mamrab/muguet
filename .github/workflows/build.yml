@@ -226,3 +226,4 @@ jobs:
             - **`Muguet-macOS.zip`**: Приложение для macOS Apple Silicon (распаковать и запустить `Muguet.app`).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

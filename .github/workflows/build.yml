@@ -58,6 +58,7 @@ jobs:
           rustup target add aarch64-apple-darwin --toolchain 1.98.1
           rustup default 1.98.1
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
       - name: Download game.zip (if provided)
         id: get_game
@@ -84,6 +85,7 @@ jobs:
 
       - name: Build macOS Application
         run: |
+          export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
           chmod +x make-app.sh
           if [ "${{ steps.get_game.outputs.has_game }}" = "true" ]; then
             echo "Сборка Muguet для macOS с интегрированными игровыми файлами..."
@@ -130,10 +132,7 @@ jobs:
           rustup target add aarch64-apple-darwin --toolchain 1.98.1
           rustup default 1.98.1
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          # Гарантируем доступ к rustup/cargo по пути, ожидаемому скриптом make-ios.sh
-          sudo mkdir -p /opt/homebrew/opt/rustup/bin
-          sudo ln -sf "$(which rustup)" /opt/homebrew/opt/rustup/bin/rustup
-          sudo ln -sf "$(which cargo)" /opt/homebrew/opt/rustup/bin/cargo
+          echo "/opt/homebrew/bin" >> $GITHUB_PATH
 
       - name: Download game.zip (if provided)
         id: get_game
@@ -163,6 +162,7 @@ jobs:
           FREE: "1"
           BUNDLE_ID: ${{ inputs.bundle_id || 'com.mamrab.muguet' }}
         run: |
+          export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:$PATH"
           chmod +x make-ios.sh
           if [ "${{ steps.get_game.outputs.has_game }}" = "true" ]; then
             echo "Сборка Muguet iOS с компиляцией и интеграцией game code..."
@@ -226,4 +226,3 @@ jobs:
             - **`Muguet-macOS.zip`**: Приложение для macOS Apple Silicon (распаковать и запустить `Muguet.app`).
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-

@@ -27,7 +27,7 @@ if [ "${FREE:-0}" = 1 ] || [ "$MODE" = "--ipa" ]; then
 fi
 export MUGUET_IOS_HEAP_GB="${MUGUET_IOS_HEAP_GB:-$HEAP_GB}"
 TOOLCHAIN=1.98.1
-export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
+export PATH="$HOME/.cargo/bin:/opt/homebrew/bin:/opt/homebrew/opt/rustup/bin:$PATH"
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=/home --remap-path-prefix=$PWD=/muguet"
 
 if [ -n "$ZIP" ]; then

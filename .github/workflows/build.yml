@@ -1,0 +1,228 @@
+name: Build Muguet (macOS & iOS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Платформа для сборки (all / ios / macos)'
+        required: true
+        type: choice
+        default: 'all'
+        options:
+          - 'all'
+          - 'ios'
+          - 'macos'
+      game_zip_url:
+        description: 'Прямая ссылка на game.zip (Опционально: вшивает WebAssembly код для iOS без JIT)'
+        required: false
+        type: string
+        default: ''
+      bundle_id:
+        description: 'iOS Bundle ID (для AltStore / SideStore / сертификата)'
+        required: false
+        type: string
+        default: 'com.mamrab.muguet'
+      create_release:
+        description: 'Создать GitHub Release с собранными файлами'
+        required: false
+        type: boolean
+        default: true
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS App
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'macos'
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install dependencies
+        run: |
+          brew install cmake
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup target add aarch64-apple-darwin --toolchain 1.98.1
+          rustup default 1.98.1
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Download game.zip (if provided)
+        id: get_game
+        run: |
+          GAME_URL="${{ inputs.game_zip_url || secrets.GAME_ZIP_URL }}"
+          if [ -n "$GAME_URL" ]; then
+            echo "Скачивание game.zip по ссылке..."
+            curl -fL "$GAME_URL" -o game.zip
+            if [ -f "game.zip" ]; then
+              echo "has_game=true" >> $GITHUB_OUTPUT
+              echo "game_file=game.zip" >> $GITHUB_OUTPUT
+            else
+              echo "Ошибка: не удалось скачать game.zip"
+              exit 1
+            fi
+          elif [ -f "game.zip" ]; then
+            echo "has_game=true" >> $GITHUB_OUTPUT
+            echo "game_file=game.zip" >> $GITHUB_OUTPUT
+          else
+            echo "game.zip не передан. Сборка в режиме JIT (запрос файлов при первом запуске на Mac)."
+            echo "has_game=false" >> $GITHUB_OUTPUT
+            echo "game_file=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build macOS Application
+        run: |
+          chmod +x make-app.sh
+          if [ "${{ steps.get_game.outputs.has_game }}" = "true" ]; then
+            echo "Сборка Muguet для macOS с интегрированными игровыми файлами..."
+            ./make-app.sh "${{ steps.get_game.outputs.game_file }}"
+          else
+            echo "Сборка стандартного Muguet для macOS..."
+            ./make-app.sh
+          fi
+
+      - name: Package macOS App
+        run: |
+          mkdir -p dist
+          ditto -c -k --sequesterRsrc build/Muguet.app dist/Muguet-macOS.zip
+          echo "Архив macOS приложения создан: dist/Muguet-macOS.zip"
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muguet-macOS
+          path: dist/Muguet-macOS.zip
+          if-no-files-found: error
+
+  build-ios:
+    name: Build iOS IPA
+    if: github.event_name != 'workflow_dispatch' || inputs.target == 'all' || inputs.target == 'ios'
+    runs-on: macos-15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Install dependencies
+        run: |
+          brew install xcodegen binaryen cmake
+
+      - name: Install Rust toolchain (1.98.1 + iOS target)
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          rustup target add aarch64-apple-ios --toolchain 1.98.1
+          rustup target add aarch64-apple-darwin --toolchain 1.98.1
+          rustup default 1.98.1
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          # Гарантируем доступ к rustup/cargo по пути, ожидаемому скриптом make-ios.sh
+          sudo mkdir -p /opt/homebrew/opt/rustup/bin
+          sudo ln -sf "$(which rustup)" /opt/homebrew/opt/rustup/bin/rustup
+          sudo ln -sf "$(which cargo)" /opt/homebrew/opt/rustup/bin/cargo
+
+      - name: Download game.zip (if provided)
+        id: get_game
+        run: |
+          GAME_URL="${{ inputs.game_zip_url || secrets.GAME_ZIP_URL }}"
+          if [ -n "$GAME_URL" ]; then
+            echo "Скачивание game.zip по ссылке..."
+            curl -fL "$GAME_URL" -o game.zip
+            if [ -f "game.zip" ]; then
+              echo "has_game=true" >> $GITHUB_OUTPUT
+              echo "game_file=game.zip" >> $GITHUB_OUTPUT
+            else
+              echo "Ошибка: не удалось скачать game.zip"
+              exit 1
+            fi
+          elif [ -f "game.zip" ]; then
+            echo "has_game=true" >> $GITHUB_OUTPUT
+            echo "game_file=game.zip" >> $GITHUB_OUTPUT
+          else
+            echo "game.zip не указан. Обратите внимание: для запуска на iOS без JIT рекомендуется указать game.zip."
+            echo "has_game=false" >> $GITHUB_OUTPUT
+            echo "game_file=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build iOS IPA
+        env:
+          FREE: "1"
+          BUNDLE_ID: ${{ inputs.bundle_id || 'com.mamrab.muguet' }}
+        run: |
+          chmod +x make-ios.sh
+          if [ "${{ steps.get_game.outputs.has_game }}" = "true" ]; then
+            echo "Сборка Muguet iOS с компиляцией и интеграцией game code..."
+            ./make-ios.sh "${{ steps.get_game.outputs.game_file }}" --ipa
+          else
+            echo "Сборка Muguet iOS IPA (без вшитого кода игры)..."
+            ./make-ios.sh --ipa
+          fi
+          mkdir -p dist
+          cp build/Muguet.ipa dist/Muguet.ipa
+          echo "IPA файл создан: dist/Muguet.ipa"
+
+      - name: Upload iOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Muguet-iOS
+          path: dist/Muguet.ipa
+          if-no-files-found: error
+
+  release:
+    name: Publish Release
+    needs: [build-macos, build-ios]
+    if: always() && (inputs.create_release != false || startsWith(github.ref, 'refs/tags/')) && !contains(needs.*.result, 'failure') && (needs.build-macos.result == 'success' || needs.build-ios.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_artifacts
+
+      - name: Prepare Release Files
+        run: |
+          mkdir -p release_files
+          find release_artifacts -type f \( -name "*.zip" -o -name "*.ipa" \) -exec cp {} release_files/ \;
+          ls -la release_files/
+
+      - name: Generate Release Tag
+        id: tag
+        run: |
+          if [ "${{ startsWith(github.ref, 'refs/tags/') }}" = "true" ]; then
+            echo "release_tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          else
+            TAG_NAME="build-$(date +'%Y%m%d-%H%M%S')"
+            echo "release_tag=$TAG_NAME" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.release_tag }}
+          name: "Muguet Build ${{ steps.tag.outputs.release_tag }}"
+          draft: false
+          prerelease: false
+          files: release_files/*
+          body: |
+            ### Автоматическая сборка Muguet (GTA V Mach-O Port)
+            Собрано с помощью GitHub Actions.
+
+            #### Файлы для скачивания:
+            - **`Muguet.ipa`**: Пакет для iOS. Установите через AltStore, SideStore, TrollStore или сторонний сертификат.
+            - **`Muguet-macOS.zip`**: Приложение для macOS Apple Silicon (распаковать и запустить `Muguet.app`).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
